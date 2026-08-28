@@ -50,11 +50,21 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        Directory.CreateDirectory(RuntimeDir);
-        AppDomain.CurrentDomain.AssemblyResolve += ResolveEmbedded;
-        ExtractNativeLoader();
-        DropUninstaller();
-        EnsurePnpmShim();
+        try
+        {
+            Directory.CreateDirectory(RuntimeDir);
+            AppDomain.CurrentDomain.AssemblyResolve += ResolveEmbedded;
+            ExtractNativeLoader();
+            DropUninstaller();
+            EnsurePnpmShim();
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("初始化失败：无法写入运行目录。\r\n" + ex.Message +
+                "\r\n\r\n请将程序移动到可写目录（如桌面、文档或非系统盘）后重新运行。",
+                "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
+        }
         try
         {
             // .NET Framework defaults to old TLS; mirrors need 1.2+.
