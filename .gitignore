@@ -6,3 +6,5 @@
 .launcher/
 # downloaded deepseek-harness source (dependency, not our code)
 deepseek-harness/
+# local build staging (extracted embedded resources + compiled outputs)
+.build/
