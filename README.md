@@ -9,7 +9,6 @@
 
 DSH-Launcher 是一个 Windows 64 位便携式启动器。单文件 `DSH-Launcher.exe`，首次运行会自动下载并搭建 Node.js、pnpm 与 deepseek-harness 源码，构建后在本机 `http://127.0.0.1:3080` 起服务，并用内嵌的 WebView2 打开网页界面。
 
-> 当前为**最初测试版本**（tag `v0.1.0-test`），尚未正式发布。
 
 ## 使用
 
@@ -59,3 +58,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
 - 本项目不使用 DeepSeek 官方 logo/品牌素材，也不暗示官方合作或授权。
 
 > 本文档为事实性/许可说明，不构成正式法律意见。
+
