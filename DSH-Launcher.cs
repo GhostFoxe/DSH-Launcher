@@ -1,4 +1,6 @@
-// DSH-mini.exe - DeepSeek Harness ultra-light bootstrap launcher (v2).
+// DSH-Launcher.exe - An unofficial one-click launcher for DeepSeek Harness (dsh).
+// Not affiliated with, endorsed by, or an official release of DeepSeek or the
+// deepseek-ai project. See README.md for the official repository link.
 //
 // Single ~1 MB file. First run downloads Node.js, pnpm and the
 // deepseek-harness sources from the network (with mirror fallback,
@@ -56,7 +58,7 @@ internal static class Program
         if (IntPtr.Size != 8)
         {
             MessageBox.Show("本程序需要 64 位 Windows 才能运行（当前为 32 位系统）。\r\n请在 64 位系统上重新运行。",
-                "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                "DSH-Launcher", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
         try
@@ -71,7 +73,7 @@ internal static class Program
         {
             MessageBox.Show("初始化失败：无法写入运行目录。\r\n" + ex.Message +
                 "\r\n\r\n请将程序移动到可写目录（如桌面、文档或非系统盘）后重新运行。",
-                "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                "DSH-Launcher", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
         try
@@ -92,15 +94,15 @@ internal static class Program
         string mutexName;
         using (var sha = SHA256.Create())
         {
-            mutexName = "DSH-mini-" + BitConverter.ToString(
+            mutexName = "DSH-Launcher-" + BitConverter.ToString(
                 sha.ComputeHash(Encoding.UTF8.GetBytes(BaseDir.ToLowerInvariant())))
                 .Replace("-", "").Substring(0, 16);
         }
         var instanceMutex = new Mutex(true, mutexName, out firstInstance);
         if (!firstInstance)
         {
-            MessageBox.Show("DSH-mini 已经在运行中（同一文件夹只允许一个实例）。",
-                "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show("DSH-Launcher 已经在运行中（同一文件夹只允许一个实例）。",
+                "DSH-Launcher", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return 0;
         }
         try
@@ -113,7 +115,7 @@ internal static class Program
             {
                 ErrorLog("下载源配置加载失败", ex.Message);
                 MessageBox.Show("下载源配置加载失败：\r\n" + ex.Message,
-                    "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    "DSH-Launcher", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return 0;
             }
             Application.Run(new MainForm());
@@ -569,7 +571,7 @@ internal static class Program
     {
         var client = new HttpClient();
         client.Timeout = TimeSpan.FromMinutes(30);
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("DSH-mini-launcher");
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("DSH-Launcher");
         return client;
     }
 
@@ -1127,7 +1129,7 @@ internal static class Program
                     }
                     catch { }
                     try { if (!p.WaitForExit(3000)) p.Kill(); } catch { }
-                    lock (sync) File.AppendAllText(BuildLog, "[DSH-mini] 进程超时(" + timeoutMs + "ms)，已强制结束" + Environment.NewLine);
+                    lock (sync) File.AppendAllText(BuildLog, "[DSH-Launcher] 进程超时(" + timeoutMs + "ms)，已强制结束" + Environment.NewLine);
                 }
                 // 用无参 WaitForExit 排空异步 stdout/stderr，确保 tail 捕获到
                 // 真正的报错行（.NET 官方推荐做法，替代不可靠的 Sleep(120)）。
@@ -2177,7 +2179,7 @@ internal static class Program
 
         public MainForm()
         {
-            Text = "DeepSeek Harness";
+            Text = "DSH-Launcher";
             Width = 1440;
             Height = 900;
             StartPosition = FormStartPosition.CenterScreen;

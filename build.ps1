@@ -1,8 +1,8 @@
-﻿# build.ps1 - 一键编译 DSH-mini
+﻿# build.ps1 - 一键编译 DSH-Launcher
 #
 # 顺序：
 #   [1/2] 用 DSH-uninstall.cs 编出 uninstall.exe
-#   [2/2] 用 DSH-mini.cs 编出 DSH-mini.exe，并把 uninstall.exe + 图标 + WebView2 DLL
+#   [2/2] 用 DSH-Launcher.cs 编出 DSH-Launcher.exe，并把 uninstall.exe + 图标 + WebView2 DLL
 #         作为内嵌资源打进主程序
 #
 # 用法（二选一）：
@@ -46,16 +46,16 @@ Invoke-Csc @(
     ('/win32icon:' + (Join-Path $assets 'xiezai.ico'))
 )
 
-Write-Host '[2/2] 编译主程序 DSH-mini.exe ...'
+Write-Host '[2/2] 编译主程序 DSH-Launcher.exe ...'
 Invoke-Csc @(
     '/nologo', '/target:winexe',
-    ('/out:' + (Join-Path $stage 'DSH-mini.exe')),
+    ('/out:' + (Join-Path $stage 'DSH-Launcher.exe')),
     ('/r:' + (Join-Path $assets 'Microsoft.Web.WebView2.Core.dll')),
     ('/r:' + (Join-Path $assets 'Microsoft.Web.WebView2.WinForms.dll')),
     '/r:System.Net.Http.dll',
     '/r:System.IO.Compression.dll',
     '/r:System.IO.Compression.FileSystem.dll',
-    (Join-Path $root 'DSH-mini.cs'),
+    (Join-Path $root 'DSH-Launcher.cs'),
     ('/resource:' + (Join-Path $assets 'Microsoft.Web.WebView2.Core.dll')),
     ('/resource:' + (Join-Path $assets 'Microsoft.Web.WebView2.WinForms.dll')),
     ('/resource:' + (Join-Path $assets 'WebView2Loader.dll')),
@@ -69,8 +69,8 @@ Invoke-Csc @(
 )
 
 # 产物复制到仓库根目录
-$final = Join-Path $root 'DSH-mini.exe'
-Copy-Item (Join-Path $stage 'DSH-mini.exe') $final -Force
+$final = Join-Path $root 'DSH-Launcher.exe'
+Copy-Item (Join-Path $stage 'DSH-Launcher.exe') $final -Force
 
 Write-Host ''
 Write-Host ('构建完成: ' + $final)

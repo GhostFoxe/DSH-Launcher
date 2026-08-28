@@ -1,4 +1,4 @@
-// 卸载.exe - standalone windowed uninstaller for the DSH-mini launcher.
+// 卸载.exe - standalone windowed uninstaller for DSH-Launcher.
 //
 // Design notes:
 //  - Only deletes what THIS launcher downloaded, all of which lives inside
@@ -27,7 +27,7 @@ internal static class Uninstaller
     private static string BaseDir { get { return AppDomain.CurrentDomain.BaseDirectory; } }
     private static string DshHome { get { return Path.Combine(BaseDir, "deepseek-harness"); } }
     private static string RuntimeDir { get { return Path.Combine(BaseDir, ".launcher"); } }
-    private static string LauncherExe { get { return Path.Combine(BaseDir, "DSH-mini.exe"); } }
+    private static string LauncherExe { get { return Path.Combine(BaseDir, "DSH-Launcher.exe"); } }
     private static string ProfileDir
     {
         get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dsh"); }
@@ -56,7 +56,7 @@ internal static class Uninstaller
     internal static void KillOurProcesses()
     {
         // Launcher of THIS folder only (full-path match) + its process tree.
-        foreach (var p in Process.GetProcessesByName("DSH-mini"))
+        foreach (var p in Process.GetProcessesByName("DSH-Launcher"))
         {
             try
             {
@@ -355,7 +355,7 @@ internal static class Uninstaller
         public UninstallForm(bool autoMode)
         {
             auto = autoMode;
-            Text = "卸载 DeepSeek Harness";
+            Text = "卸载 DSH-Launcher";
             Width = 780;
             Height = 800;
             StartPosition = FormStartPosition.CenterScreen;
@@ -424,7 +424,7 @@ internal static class Uninstaller
             }
             banner.Controls.Add(new Label
             {
-                Text = "卸载 DeepSeek Harness",
+                Text = "卸载 DSH-Launcher",
                 Font = Theme.H1,
                 ForeColor = Theme.Text,
                 Left = 0,

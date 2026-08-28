@@ -1,8 +1,8 @@
 {
-  // DSH-mini 下载源配置（开发者维护，构建时内嵌进 DSH-mini.exe）。
+  // DSH-Launcher 下载源配置（开发者维护，构建时内嵌进 DSH-Launcher.exe）。
   //
   // 维护说明：
-  //  - 修改任一 url 后重新编译即可生效，无需改动 DSH-mini.cs。
+  //  - 修改任一 url 后重新编译即可生效，无需改动 DSH-Launcher.cs。
   //  - urls 按“首选 → 备用 → 备用…”排列；运行时会先测速、按当前网络
   //    延迟重排，优先走最快且可达的源，失败再依次回退。
   //  - repo.zipTemplates 中的 "{0}" 会被替换为已解析的提交 SHA。

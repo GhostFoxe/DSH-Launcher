@@ -1,5 +1,5 @@
 @echo off
-REM build.cmd - double-click to build DSH-mini (delegates to build.ps1)
+REM build.cmd - double-click to build DSH-Launcher (delegates to build.ps1)
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build.ps1"
 if errorlevel 1 (
   echo.
