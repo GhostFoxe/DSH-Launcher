@@ -1,0 +1,69 @@
+{
+  // DSH-mini 下载源配置（开发者维护，构建时内嵌进 DSH-mini.exe）。
+  //
+  // 维护说明：
+  //  - 修改任一 url 后重新编译即可生效，无需改动 DSH-mini.cs。
+  //  - urls 按“首选 → 备用 → 备用…”排列；运行时会先测速、按当前网络
+  //    延迟重排，优先走最快且可达的源，失败再依次回退。
+  //  - repo.zipTemplates 中的 "{0}" 会被替换为已解析的提交 SHA。
+  "node": {
+    "urls": [
+      "https://nodejs.org/dist/v24.15.0/node-v24.15.0-win-x64.zip",
+      "https://registry.npmmirror.com/-/binary/node/v24.15.0/node-v24.15.0-win-x64.zip",
+      "https://cdn.npmmirror.com/binaries/node/v24.15.0/node-v24.15.0-win-x64.zip"
+    ]
+  },
+  "pnpm": {
+    "zip": [
+      "https://github.com/pnpm/pnpm/releases/download/v11.7.0/pnpm-win32-x64.zip"
+    ],
+    "tgz": [
+      "https://registry.npmmirror.com/pnpm/-/pnpm-11.7.0.tgz",
+      "https://registry.npmjs.org/pnpm/-/pnpm-11.7.0.tgz"
+    ]
+  },
+  "repo": {
+    "pinnedSha": "b150a551b8d465e31e418e1b2eaf5e79bbb7d28e",
+    "apiUrl": "https://api.github.com/repos/deepseek-ai/deepseek-harness/commits/master",
+    "zipTemplates": [
+      "https://codeload.github.com/deepseek-ai/deepseek-harness/zip/{0}",
+      "https://ghfast.top/https://github.com/deepseek-ai/deepseek-harness/archive/{0}.zip",
+      "https://gh-proxy.com/https://github.com/deepseek-ai/deepseek-harness/archive/{0}.zip"
+    ]
+  },
+  "webView2Bootstrapper": "https://go.microsoft.com/fwlink/p/?LinkId=2124703",
+  "npm": {
+    // pnpm install 使用的 npm 包源；运行时会测速选优，失败自动切换
+    "registry": [
+      "https://registry.npmmirror.com",
+      "https://registry.npmjs.org",
+      "https://registry.yarnpkg.com"
+    ]
+  },
+  "tuning": {
+    // 下载前是否对候选源并发测速（测首字节延迟）并优先选最快者
+    "probeEnabled": true,
+    // 单源测速超时（毫秒）；超时视为不可达
+    "probeTimeoutMs": 4000,
+    // 下载停滞阈值（毫秒）：连续这么久收不到任何字节即判定超时并切换源
+    "stallTimeoutMs": 20000,
+    // 单源下载总时长上限（毫秒）
+    "overallTimeoutMs": 900000,
+    // 测速后排名第一的源允许的总尝试次数（其余源各 1 次）
+    "firstSourceAttempts": 2,
+    // 同一源相邻两次尝试间的退避等待（毫秒）
+    "retryDelayMs": 1500,
+    // 测速时每个源下载的采样字节数（用于估算吞吐量）
+    "probeSampleBytes": 262144,
+    // 依赖安装总时长上限（毫秒）；超时强制结束并报错
+    "installTimeoutMs": 1800000,
+    // 项目构建总时长上限（毫秒）
+    "buildTimeoutMs": 1200000,
+    // pnpm 单次下载超时（毫秒）
+    "fetchTimeoutMs": 600000,
+    // pnpm 下载失败重试次数
+    "fetchRetries": 3,
+    // pnpm 网络并发数（慢网下调低可减少断流）
+    "networkConcurrency": 8
+  }
+}

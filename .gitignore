@@ -1,0 +1,8 @@
+# build artifacts
+*.exe
+*.zip
+*.log
+# generated runtime (portable node/pnpm, download cache, webview2 data, stamps)
+.launcher/
+# downloaded deepseek-harness source (dependency, not our code)
+deepseek-harness/
