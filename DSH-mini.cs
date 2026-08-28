@@ -2159,6 +2159,7 @@ internal static class Program
         private float dpiF = 1F;
         private int loadShownTick;
         private Process serverProcess;
+        private string webUrl = Url; // 服务认证 URL（新版 dsh web 带 ?token=），从服务输出捕获
         private StreamWriter serverLog;
         private int waitedSeconds;
         private bool navigated;
@@ -3021,6 +3022,18 @@ internal static class Program
                 {
                     if (ev.Data == null) return;
                     try { lock (serverLog) { serverLog.WriteLine(ev.Data); serverLog.Flush(); } } catch { }
+                    // 捕获新版 dsh web 的 token 认证 URL（形如 "dsh web: http://.../?token=..."）
+                    int mark = ev.Data.IndexOf("dsh web:", StringComparison.Ordinal);
+                    if (mark >= 0)
+                    {
+                        int u = ev.Data.IndexOf("http", mark, StringComparison.Ordinal);
+                        if (u >= 0)
+                        {
+                            int end = ev.Data.IndexOf(" (", u, StringComparison.Ordinal);
+                            if (end < 0) end = ev.Data.Length;
+                            webUrl = ev.Data.Substring(u, end - u).Trim();
+                        }
+                    }
                 };
                 serverProcess.OutputDataReceived += handler;
                 serverProcess.ErrorDataReceived += handler;
@@ -3073,7 +3086,7 @@ internal static class Program
             if (!navigateStarted)
             {
                 navigateStarted = true;
-                webView.CoreWebView2.Navigate(Url);
+                webView.CoreWebView2.Navigate(webUrl);
                 return;
             }
             if (!pageReady) return;
