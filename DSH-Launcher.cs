@@ -51,6 +51,65 @@ internal static class Program
     private static string StampFile { get { return Path.Combine(RuntimeDir, "build.stamp"); } }
     private static string InstallStampFile { get { return Path.Combine(RuntimeDir, "install.stamp"); } }
 
+    // ---------- 设置（开机自启动 + 关闭行为） ----------
+    private static string SettingsFile { get { return Path.Combine(RuntimeDir, "settings.json"); } }
+    private static bool closeToTray = true; // 关闭窗口：true=最小化到托盘后台运行，false=直接退出
+
+    private static void LoadSettings()
+    {
+        try
+        {
+            if (!File.Exists(SettingsFile)) return;
+            var root = Json.Parse(File.ReadAllText(SettingsFile)) as Dictionary<string, object>;
+            if (root == null) return;
+            object cb;
+            if (root.TryGetValue("closeBehavior", out cb) && cb is string)
+            {
+                string v = (string)cb;
+                if (v == "exit") closeToTray = false;
+                else if (v == "tray") closeToTray = true;
+            }
+        }
+        catch { }
+    }
+
+    private static void SaveSettings()
+    {
+        try
+        {
+            Directory.CreateDirectory(RuntimeDir);
+            File.WriteAllText(SettingsFile,
+                "{\r\n  \"closeBehavior\": \"" + (closeToTray ? "tray" : "exit") + "\"\r\n}\r\n");
+        }
+        catch { }
+    }
+
+    private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string RunValueName = "DSH-Launcher";
+
+    private static bool IsAutoStartEnabled()
+    {
+        try
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(RunKey, false))
+                return k != null && k.GetValue(RunValueName) != null;
+        }
+        catch { return false; }
+    }
+
+    private static void SetAutoStart(bool enable)
+    {
+        try
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(RunKey))
+            {
+                if (enable) k.SetValue(RunValueName, "\"" + Application.ExecutablePath + "\"");
+                else k.DeleteValue(RunValueName, false);
+            }
+        }
+        catch { }
+    }
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -64,6 +123,7 @@ internal static class Program
         try
         {
             Directory.CreateDirectory(RuntimeDir);
+            LoadSettings();
             AppDomain.CurrentDomain.AssemblyResolve += ResolveEmbedded;
             ExtractNativeLoader();
             DropUninstaller();
@@ -3253,6 +3313,7 @@ internal static class Program
             {
                 var menu = new ContextMenuStrip();
                 menu.Items.Add("打开 DSH-Launcher", null, (s, e) => RestoreFromTray());
+                menu.Items.Add("设置", null, (s, e) => OpenSettings());
                 menu.Items.Add(new ToolStripSeparator());
                 menu.Items.Add("退出", null, (s, e) => Quit());
 
@@ -3274,6 +3335,15 @@ internal static class Program
                 Show();
                 WindowState = FormWindowState.Normal;
                 Activate();
+            }
+            catch { }
+        }
+
+        private void OpenSettings()
+        {
+            try
+            {
+                using (var f = new SettingsForm()) { f.ShowDialog(this); }
             }
             catch { }
         }
@@ -3301,7 +3371,7 @@ internal static class Program
         {
             // 点 X：隐藏到系统托盘继续后台运行；真正退出只由“退出”按钮/托盘菜单触发
             // （托盘图标创建失败时回退为普通关闭，避免“窗口消失且无法找回”）
-            if (!reallyExit && trayIcon != null)
+            if (!reallyExit && closeToTray && trayIcon != null)
             {
                 e.Cancel = true;
                 Hide();
@@ -3337,6 +3407,111 @@ internal static class Program
             try { if (serverLog != null) serverLog.Dispose(); } catch { }
             try { if (trayIcon != null) { trayIcon.Visible = false; trayIcon.Dispose(); trayIcon = null; } } catch { }
             base.OnFormClosing(e);
+        }
+    }
+
+    // 设置窗口：开机自启动 + 关闭行为（最小化到托盘 / 直接退出）
+    private sealed class SettingsForm : Form
+    {
+        private CheckBox autoStart;
+        private RadioButton rbTray;
+        private RadioButton rbExit;
+
+        public SettingsForm()
+        {
+            Text = "DSH-Launcher 设置";
+            Width = 560;
+            Height = 520;
+            StartPosition = FormStartPosition.CenterScreen;
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            BackColor = Theme.Bg;
+            Font = Theme.Small;
+            try
+            {
+                using (Stream st = Assembly.GetExecutingAssembly().GetManifestResourceStream("dafeiyu.ico"))
+                    if (st != null) Icon = new Icon(st);
+            }
+            catch { }
+
+            var title = new Label
+            {
+                Text = "设置",
+                Font = Theme.Title,
+                ForeColor = Theme.Text,
+                AutoSize = true,
+                Left = 24,
+                Top = 18,
+            };
+
+            var card = new Panel
+            {
+                Left = 24,
+                Top = 84,
+                Width = Width - 48,
+                Height = 300,
+                BackColor = Theme.Card,
+                BorderStyle = BorderStyle.FixedSingle,
+            };
+
+            int y = 24;
+            var sec1 = new Label { Text = "启动", Font = Theme.H1, ForeColor = Theme.Text, Left = 24, Top = y, AutoSize = true, BackColor = Theme.Card };
+            autoStart = new CheckBox { Text = "开机自动启动", Font = Theme.Body, ForeColor = Theme.Text, Left = 24, Top = y + 46, AutoSize = true, BackColor = Theme.Card };
+            var hint1 = new Label { Text = "登录 Windows 后自动在后台启动 DSH-Launcher", Font = Theme.Tiny, ForeColor = Theme.Gray, Left = 44, Top = y + 88, AutoSize = true, BackColor = Theme.Card };
+
+            y += 138;
+            var sec2 = new Label { Text = "关闭窗口时", Font = Theme.H1, ForeColor = Theme.Text, Left = 24, Top = y, AutoSize = true, BackColor = Theme.Card };
+            rbTray = new RadioButton { Text = "最小化到系统托盘（继续后台运行）", Font = Theme.Body, ForeColor = Theme.Text, Left = 24, Top = y + 46, AutoSize = true, BackColor = Theme.Card };
+            rbExit = new RadioButton { Text = "直接退出程序（关闭服务）", Font = Theme.Body, ForeColor = Theme.Text, Left = 24, Top = y + 86, AutoSize = true, BackColor = Theme.Card };
+
+            card.Controls.Add(sec1);
+            card.Controls.Add(autoStart);
+            card.Controls.Add(hint1);
+            card.Controls.Add(sec2);
+            card.Controls.Add(rbTray);
+            card.Controls.Add(rbExit);
+
+            var save = MakeButton("保存", 24, 404, 150, Theme.Accent, Color.White, true);
+            var cancel = MakeButton("取消", 200, 404, 130, Theme.Card, Theme.Text, false);
+            save.Click += (s, e) => { closeToTray = rbTray.Checked; SaveSettings(); SetAutoStart(autoStart.Checked); Close(); };
+            cancel.Click += (s, e) => Close();
+
+            Controls.Add(title);
+            Controls.Add(card);
+            Controls.Add(save);
+            Controls.Add(cancel);
+
+            autoStart.Checked = IsAutoStartEnabled();
+            rbTray.Checked = closeToTray;
+            rbExit.Checked = !closeToTray;
+        }
+
+        private Button MakeButton(string text, int x, int y, int w, Color bg, Color fg, bool accent)
+        {
+            var b = new Button
+            {
+                Text = text,
+                Left = x,
+                Top = y,
+                Width = w,
+                Height = 52,
+                BackColor = bg,
+                ForeColor = fg,
+                FlatStyle = FlatStyle.Flat,
+                Font = Theme.Body,
+            };
+            if (accent)
+            {
+                b.FlatAppearance.BorderSize = 0;
+                b.MouseEnter += (s, e) => b.BackColor = Theme.AccentHover;
+                b.MouseLeave += (s, e) => b.BackColor = bg;
+            }
+            else
+            {
+                b.FlatAppearance.BorderColor = Theme.CardBorder;
+            }
+            return b;
         }
     }
 }
