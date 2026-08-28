@@ -167,6 +167,22 @@ internal static class Program
         try { File.AppendAllText(BuildLog, "[" + DateTime.Now.ToString("HH:mm:ss") + "] " + line + Environment.NewLine); } catch { }
     }
 
+    // External observability hook for the boot-time error panel: every
+    // ShowError also lands in .launcher\error.log so headless/automated runs
+    // (and users filing bugs) can see WHICH internal error fired without
+    // reading the GUI. This is also the signal that distinguishes "stuck at
+    // loading" from "showing an error panel".
+    private static void ErrorLog(string title, string detail)
+    {
+        try
+        {
+            File.AppendAllText(Path.Combine(RuntimeDir, "error.log"),
+                "[" + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss") + "] " + title + Environment.NewLine
+                + detail + Environment.NewLine + Environment.NewLine);
+        }
+        catch { }
+    }
+
     private static string PnpmShim { get { return Path.Combine(Path.GetDirectoryName(NodeExe), "pnpm.cmd"); } }
 
     // Upstream scripts/build.ts spawns "pnpm" BY NAME, which only resolves
@@ -2444,6 +2460,7 @@ internal static class Program
 
         private void ShowError(string title, string detail, bool canRetry)
         {
+            ErrorLog(title, detail);
             FadeTo(() =>
             {
                 loadPanel.StopAnim();
