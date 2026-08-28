@@ -2176,6 +2176,8 @@ internal static class Program
         private bool navigated;
         private bool serverCheckBusy;
         private bool busy;
+        private NotifyIcon trayIcon;   // 系统托盘图标：点 X 后驻留后台
+        private bool reallyExit;       // true = 由“退出”按钮/托盘菜单触发的真正关闭
 
         public MainForm()
         {
@@ -2199,6 +2201,7 @@ internal static class Program
                 }
             }
             catch { }
+            BuildTrayIcon();
 
             // dpiF is finalized in OnLoad via GetDpiForWindow (the window
             // DPI is authoritative); images are pre-rendered at 2x so they
@@ -2329,7 +2332,7 @@ internal static class Program
                 StartBootstrap();
             };
             confirmExit = MakeButton("退出", groupX + 264, 672, 140, Theme.Card, Theme.Text, false);
-            confirmExit.Click += (s, e) => Close();
+            confirmExit.Click += (s, e) => Quit();
             confirmPanel.Controls.Add(confirmStart);
             confirmPanel.Controls.Add(confirmExit);
         }
@@ -2476,7 +2479,7 @@ internal static class Program
                 });
             };
             errorExit = MakeButton("退出", groupX + 204, 668, 140, Theme.Card, Theme.Text, false);
-            errorExit.Click += (s, e) => Close();
+            errorExit.Click += (s, e) => Quit();
             errorPanel.Controls.Add(retryButton);
             errorPanel.Controls.Add(errorExit);
         }
@@ -3242,8 +3245,69 @@ internal static class Program
             { UseShellExecute = false, CreateNoWindow = true })) { }
         }
 
+        // ---------- 系统托盘（点 X 驻留后台，服务不退出） ----------
+
+        private void BuildTrayIcon()
+        {
+            try
+            {
+                var menu = new ContextMenuStrip();
+                menu.Items.Add("打开 DSH-Launcher", null, (s, e) => RestoreFromTray());
+                menu.Items.Add(new ToolStripSeparator());
+                menu.Items.Add("退出", null, (s, e) => Quit());
+
+                trayIcon = new NotifyIcon { Text = "DSH-Launcher", ContextMenuStrip = menu };
+                using (Stream st = Assembly.GetExecutingAssembly().GetManifestResourceStream("dafeiyu.ico"))
+                {
+                    if (st != null) trayIcon.Icon = new Icon(st);
+                }
+                trayIcon.DoubleClick += (s, e) => RestoreFromTray();
+                trayIcon.Visible = true;
+            }
+            catch { }
+        }
+
+        private void RestoreFromTray()
+        {
+            try
+            {
+                Show();
+                WindowState = FormWindowState.Normal;
+                Activate();
+            }
+            catch { }
+        }
+
+        private void ShowTrayBalloon()
+        {
+            try
+            {
+                if (trayIcon != null)
+                    trayIcon.ShowBalloonTip(3000, "DSH-Launcher",
+                        "已最小化到系统托盘，服务仍在后台运行。双击托盘图标可重新打开，右键可退出。",
+                        ToolTipIcon.Info);
+            }
+            catch { }
+        }
+
+        private void Quit()
+        {
+            reallyExit = true;
+            try { Close(); }
+            finally { reallyExit = false; }
+        }
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
+            // 点 X：隐藏到系统托盘继续后台运行；真正退出只由“退出”按钮/托盘菜单触发
+            // （托盘图标创建失败时回退为普通关闭，避免“窗口消失且无法找回”）
+            if (!reallyExit && trayIcon != null)
+            {
+                e.Cancel = true;
+                Hide();
+                ShowTrayBalloon();
+                return;
+            }
             if (busy)
             {
                 var r = MessageBox.Show(this,
@@ -3271,6 +3335,7 @@ internal static class Program
                 try { KillServerTree(); } catch { }
             }
             try { if (serverLog != null) serverLog.Dispose(); } catch { }
+            try { if (trayIcon != null) { trayIcon.Visible = false; trayIcon.Dispose(); trayIcon = null; } } catch { }
             base.OnFormClosing(e);
         }
     }
