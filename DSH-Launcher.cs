@@ -3369,9 +3369,10 @@ internal static class Program
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
-            // 点 X：隐藏到系统托盘继续后台运行；真正退出只由“退出”按钮/托盘菜单触发
+            // 点 X：隐藏到系统托盘继续后台运行；真正退出只由“退出”按钮/托盘菜单触发。
+            // 报错状态下即使设置里选了“直接退出”，也保留后台（便于稍后重试）。
             // （托盘图标创建失败时回退为普通关闭，避免“窗口消失且无法找回”）
-            if (!reallyExit && closeToTray && trayIcon != null)
+            if (!reallyExit && trayIcon != null && (closeToTray || errorPanel.Visible))
             {
                 e.Cancel = true;
                 Hide();
