@@ -2160,6 +2160,8 @@ internal static class Program
         private int loadShownTick;
         private Process serverProcess;
         private string webUrl = Url; // 服务认证 URL（新版 dsh web 带 ?token=），从服务输出捕获
+        private bool webUrlReady;    // 是否已从服务输出捕获到认证 URL
+        private int serverUpTick;    // 端口首次就绪的 TickCount（token 捕获兜底超时用）
         private StreamWriter serverLog;
         private int waitedSeconds;
         private bool navigated;
@@ -3018,6 +3020,9 @@ internal static class Program
                 psi.StandardErrorEncoding = Encoding.UTF8;
                 serverLog = new StreamWriter(ServerLog, false);
                 serverProcess = Process.Start(psi);
+                webUrl = Url;
+                webUrlReady = false;
+                serverUpTick = 0;
                 DataReceivedEventHandler handler = (s, ev) =>
                 {
                     if (ev.Data == null) return;
@@ -3032,6 +3037,7 @@ internal static class Program
                             int end = ev.Data.IndexOf(" (", u, StringComparison.Ordinal);
                             if (end < 0) end = ev.Data.Length;
                             webUrl = ev.Data.Substring(u, end - u).Trim();
+                            webUrlReady = true;
                         }
                     }
                 };
@@ -3079,6 +3085,13 @@ internal static class Program
             // WebView2 must also be fully initialized before hand-off.
             if (Environment.TickCount - loadShownTick < 1200) return;
             if (webView == null || webView.CoreWebView2 == null) return;
+            // 等 token URL 捕获后再导航（stdout 缓冲导致端口就绪可能早于 token 到达）；超时回退默认 URL
+            if (serverUpTick == 0) serverUpTick = Environment.TickCount;
+            if (!webUrlReady)
+            {
+                if (Environment.TickCount - serverUpTick < 5000) return;
+                webUrl = Url;
+            }
             // Pre-navigate while the WebView2 is still hidden behind the
             // loading screen. The page loads "underneath the animation";
             // only once it has finished rendering do we dissolve the
