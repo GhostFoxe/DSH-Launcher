@@ -92,6 +92,7 @@ internal static class Program
             }
             catch (Exception ex)
             {
+                ErrorLog("下载源配置加载失败", ex.Message);
                 MessageBox.Show("下载源配置加载失败：\r\n" + ex.Message,
                     "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return 0;
