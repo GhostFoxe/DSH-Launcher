@@ -918,11 +918,14 @@ internal static class Program
     {
         // Higher value = higher priority; Classify only ever upgrades.
         None = 0,
+        Dependency,  // 依赖缺失/解析失败
+        Build,       // 构建/编译错误
+        Oom,         // 内存不足
         Permission,
         DiskFull,
         Network,
         Timeout,
-        Other,
+        Other,       // 仅 RunLogged 捕获异常时使用
     }
 
     private sealed class RunResult
@@ -966,6 +969,23 @@ internal static class Program
             || s.Contains("access is denied") || s.Contains("operation not permitted"))
         {
             if (kind < FailKind.Permission) kind = FailKind.Permission;
+            return;
+        }
+        if (s.Contains("heap out of memory") || s.Contains("out of memory") || s.Contains("enomem"))
+        {
+            if (kind < FailKind.Oom) kind = FailKind.Oom;
+            return;
+        }
+        if (s.Contains("error ts") || s.Contains("build failed") || s.Contains("failed to build")
+            || s.Contains("rolldown") || s.Contains("esbuild") || s.Contains("vite"))
+        {
+            if (kind < FailKind.Build) kind = FailKind.Build;
+            return;
+        }
+        if (s.Contains("enoent") || s.Contains("cannot find module")
+            || s.Contains("err_pnpm") || s.Contains("elifecycle"))
+        {
+            if (kind < FailKind.Dependency) kind = FailKind.Dependency;
         }
     }
 
@@ -982,6 +1002,9 @@ internal static class Program
             case FailKind.Network: return "网络连接不稳定或不可用";
             case FailKind.DiskFull: return "磁盘空间不足";
             case FailKind.Permission: return "权限不足";
+            case FailKind.Oom: return "内存不足";
+            case FailKind.Build: return "构建或编译失败";
+            case FailKind.Dependency: return "依赖缺失或解析失败";
             default: return "未知错误";
         }
     }
@@ -1061,9 +1084,9 @@ internal static class Program
                     try { if (!p.WaitForExit(3000)) p.Kill(); } catch { }
                     lock (sync) File.AppendAllText(BuildLog, "[DSH-mini] 进程超时(" + timeoutMs + "ms)，已强制结束" + Environment.NewLine);
                 }
-                // Let the async stdout/stderr readers drain their final lines
-                // so the captured tail is as complete as possible.
-                Thread.Sleep(120);
+                // 用无参 WaitForExit 排空异步 stdout/stderr，确保 tail 捕获到
+                // 真正的报错行（.NET 官方推荐做法，替代不可靠的 Sleep(120)）。
+                try { p.WaitForExit(); } catch { }
                 result.ExitCode = p.ExitCode;
                 result.Kind = result.TimedOut ? FailKind.Timeout : kind;
                 result.BinLinkWarned = binLinkWarned;
