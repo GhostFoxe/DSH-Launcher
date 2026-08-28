@@ -11,7 +11,9 @@
       "https://nodejs.org/dist/v24.15.0/node-v24.15.0-win-x64.zip",
       "https://registry.npmmirror.com/-/binary/node/v24.15.0/node-v24.15.0-win-x64.zip",
       "https://cdn.npmmirror.com/binaries/node/v24.15.0/node-v24.15.0-win-x64.zip"
-    ]
+    ],
+    // 解压后 node.exe 的 SHA256，用于完整性校验；为空则跳过校验
+    "sha256": "3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5"
   },
   "pnpm": {
     "zip": [
@@ -20,7 +22,9 @@
     "tgz": [
       "https://registry.npmmirror.com/pnpm/-/pnpm-11.7.0.tgz",
       "https://registry.npmjs.org/pnpm/-/pnpm-11.7.0.tgz"
-    ]
+    ],
+    // 解压后 pnpm.mjs 的 SHA256，用于完整性校验；为空则跳过校验
+    "sha256": "d3a7f4bde2f32c5acc5f012d1edc24c24ea247c2f6c8823146f8cd69ed70b22f"
   },
   "repo": {
     "pinnedSha": "b150a551b8d465e31e418e1b2eaf5e79bbb7d28e",

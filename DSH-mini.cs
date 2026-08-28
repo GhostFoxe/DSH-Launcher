@@ -206,7 +206,13 @@ internal static class Program
         try
         {
             if (!File.Exists(PnpmMjs)) return;
-            string content = "@\"%~dp0node.exe\" \"" + PnpmMjs + "\" %*\r\n";
+            // 用 %~dp0 相对路径 + 延迟展开，避免绝对路径中的 & / % / ^ / ! 被 cmd 误解析
+            string content =
+                "@echo off\r\n" +
+                "setlocal EnableDelayedExpansion\r\n" +
+                "set \"NODE=%~dp0node.exe\"\r\n" +
+                "set \"PNPM=%~dp0..\\pnpm\\dist\\pnpm.mjs\"\r\n" +
+                "\"!NODE!\" \"!PNPM!\" %*\r\n";
             if (File.Exists(PnpmShim) && File.ReadAllText(PnpmShim) == content) return;
             File.WriteAllText(PnpmShim, content);
         }
@@ -222,6 +228,8 @@ internal static class Program
         public List<string> NodeUrls = new List<string>();
         public List<string> PnpmZipUrls = new List<string>();
         public List<string> PnpmTgzUrls = new List<string>();
+        public string NodeSha256 = "";
+        public string PnpmSha256 = "";
         public string PinnedSha = "";
         public string RepoApiUrl = "";
         public List<string> RepoZipTemplates = new List<string>();
@@ -481,6 +489,8 @@ internal static class Program
                     NodeUrls = CfgStrList(node, "urls"),
                     PnpmZipUrls = CfgStrList(pnpm, "zip"),
                     PnpmTgzUrls = CfgStrList(pnpm, "tgz"),
+                    NodeSha256 = CfgStr(node, "sha256") ?? "",
+                    PnpmSha256 = CfgStr(pnpm, "sha256") ?? "",
                     PinnedSha = CfgStr(repo, "pinnedSha") ?? "",
                     RepoApiUrl = CfgStr(repo, "apiUrl") ?? "",
                     RepoZipTemplates = CfgStrList(repo, "zipTemplates"),
@@ -515,6 +525,13 @@ internal static class Program
                 if (cfg.StallTimeoutMs < 1000) cfg.StallTimeoutMs = 1000;
                 if (cfg.ProbeTimeoutMs < 500) cfg.ProbeTimeoutMs = 500;
                 if (cfg.FirstSourceAttempts < 1) cfg.FirstSourceAttempts = 1;
+                // 超时/并发参数下限兜底：避免误配为 0/负数导致“立即超时强杀”等异常
+                if (cfg.InstallTimeoutMs < 60000) cfg.InstallTimeoutMs = 60000;
+                if (cfg.BuildTimeoutMs < 60000) cfg.BuildTimeoutMs = 60000;
+                if (cfg.OverallTimeoutMs < 10000) cfg.OverallTimeoutMs = 10000;
+                if (cfg.FetchTimeoutMs < 10000) cfg.FetchTimeoutMs = 10000;
+                if (cfg.FetchRetries < 1) cfg.FetchRetries = 1;
+                if (cfg.NetworkConcurrency < 1) cfg.NetworkConcurrency = 1;
 
                 return cfg;
             }
@@ -1183,7 +1200,9 @@ internal static class Program
     private static bool SourcePresent()
     {
         return File.Exists(ShaFile)
-            && File.Exists(Path.Combine(DshHome, "package.json"));
+            && File.Exists(Path.Combine(DshHome, "package.json"))
+            && File.Exists(Path.Combine(DshHome, "pnpm-workspace.yaml"))
+            && File.Exists(Path.Combine(DshHome, @"apps\cli\package.json"));
     }
 
     // Probe the configured npm registries and return them fastest-first.
@@ -1241,28 +1260,56 @@ internal static class Program
         error = null;
         try
         {
-            // 1/4 Node.js
+            // 1/4 Node.js — 逐源下载+解压+校验，某源缺 node.exe 时换下一源（M3）
             if (!File.Exists(NodeExe))
             {
-                string zip = Path.Combine(RuntimeDir, "node.zip");
                 ctx.SetStatus("[1/4] 下载 Node.js");
-                DownloadWithFallbackAsync("Node.js", Cfg.NodeUrls, zip, true, ctx.SetStatus, DownloadProgress(ctx, "Node.js")).GetAwaiter().GetResult();
-                ctx.SetStatus("[1/4] 解压 Node.js...");
-                ctx.SetProgress(null, "解压中...");
-                using (var nodeZip = ZipFile.OpenRead(zip))
+                bool nodeOk = false;
+                var nodeFailures = new List<string>();
+                foreach (string url in Cfg.NodeUrls)
                 {
-                    foreach (var entry in nodeZip.Entries)
+                    string zip = Path.Combine(RuntimeDir, "node.zip");
+                    try
                     {
-                        if (entry.FullName.EndsWith("/node.exe", StringComparison.OrdinalIgnoreCase))
+                        DownloadWithFallbackAsync("Node.js", new List<string> { url }, zip, true, ctx.SetStatus, DownloadProgress(ctx, "Node.js")).GetAwaiter().GetResult();
+                        ctx.SetStatus("[1/4] 解压 Node.js...");
+                        ctx.SetProgress(null, "解压中...");
+                        using (var nodeZip = ZipFile.OpenRead(zip))
                         {
-                            Directory.CreateDirectory(Path.GetDirectoryName(NodeExe));
-                            entry.ExtractToFile(NodeExe, true);
-                            break;
+                            foreach (var entry in nodeZip.Entries)
+                            {
+                                if (entry.FullName.EndsWith("/node.exe", StringComparison.OrdinalIgnoreCase))
+                                {
+                                    Directory.CreateDirectory(Path.GetDirectoryName(NodeExe));
+                                    entry.ExtractToFile(NodeExe, true);
+                                    break;
+                                }
+                            }
+                        }
+                        File.Delete(zip);
+                        if (File.Exists(NodeExe))
+                        {
+                            if (VerifySha256(NodeExe, Cfg.NodeSha256)) { nodeOk = true; break; }
+                            nodeFailures.Add(url + " -> node.exe 校验和不匹配");
+                            try { File.Delete(NodeExe); } catch { }
+                        }
+                        else
+                        {
+                            nodeFailures.Add(url + " -> 压缩包中未找到 node.exe");
                         }
                     }
+                    catch (Exception ex)
+                    {
+                        nodeFailures.Add(url + " -> " + ex.Message);
+                        try { if (File.Exists(zip)) File.Delete(zip); } catch { }
+                        try { if (File.Exists(NodeExe)) File.Delete(NodeExe); } catch { }
+                    }
                 }
-                if (!File.Exists(NodeExe)) throw new InvalidDataException("Node.js 压缩包中未找到 node.exe");
-                File.Delete(zip);
+                if (!nodeOk)
+                {
+                    error = "Node.js 下载失败：\r\n" + string.Join("\r\n", nodeFailures);
+                    return false;
+                }
             }
             // 2/4 pnpm (only dist\ is needed; run via node). Probe ALL pnpm
             // sources (GitHub release zip + npm tarballs) together so the
@@ -1322,8 +1369,9 @@ internal static class Program
                         else
                             ExtractZipFiltered(dest, PnpmDir, name => name.StartsWith("dist/", StringComparison.Ordinal));
                         File.Delete(dest);
-                        downloaded = true;
-                        break;
+                        if (VerifySha256(PnpmMjs, Cfg.PnpmSha256)) { downloaded = true; break; }
+                        failures.Add(url + " -> pnpm 校验和不匹配");
+                        try { if (File.Exists(PnpmMjs)) File.Delete(PnpmMjs); } catch { }
                     }
                     catch (Exception ex)
                     {
@@ -1475,6 +1523,40 @@ internal static class Program
                 if (!ok) return false;
                 client.EndConnect(ar);
                 return true;
+            }
+        }
+        catch { return false; }
+    }
+
+    // L1: 区分“3080 被 web 服务占用”与“被任意 TCP 程序占用”。attach 前用 HTTP 探测，
+    // 避免把别的程序占用的端口误当成自己的服务而“串台”。
+    internal static bool IsHttpUp()
+    {
+        try
+        {
+            using (var client = NewHttp())
+            {
+                client.Timeout = TimeSpan.FromSeconds(3);
+                using (var resp = client.GetAsync(Url, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult())
+                {
+                    return (int)resp.StatusCode < 500; // 有 HTTP 响应即视为 web 服务
+                }
+            }
+        }
+        catch { return false; }
+    }
+
+    // M2: 下载产物完整性校验。expectedHex 为空时跳过；不匹配或读取失败返回 false。
+    private static bool VerifySha256(string path, string expectedHex)
+    {
+        if (string.IsNullOrEmpty(expectedHex)) return true;
+        try
+        {
+            using (var sha = SHA256.Create())
+            using (var fs = File.OpenRead(path))
+            {
+                string actual = BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "").ToLowerInvariant();
+                return string.Equals(actual, expectedHex, StringComparison.OrdinalIgnoreCase);
             }
         }
         catch { return false; }
@@ -2771,6 +2853,7 @@ internal static class Program
             Task.Run(() =>
             {
                 bool up = IsServerUp();
+                bool httpUp = up && IsHttpUp(); // L1: attach 前在后台线程校验是否为 web 服务
                 Ui(() =>
                 {
                     if (IsDisposed) return;
@@ -2783,6 +2866,13 @@ internal static class Program
                     // clash would break our own server start anyway.
                     if (up && installed)
                     {
+                        if (!httpUp)
+                        {
+                            ShowError("检测到端口占用",
+                                "3080 端口已被占用，但未检测到 DeepSeek Harness 服务（可能是其他程序占用了该端口）。\r\n请关闭占用端口的程序后重试。",
+                                true);
+                            return;
+                        }
                         poll.Start();
                         OnPoll(null, EventArgs.Empty);
                         return;
@@ -2826,6 +2916,7 @@ internal static class Program
 
         private void StartBootstrap()
         {
+            if (busy) return; // 防重入：双击/快速重试不会并发跑两个 Bootstrap
             busy = true;
             var ctx = MakeStageContext();
             Task.Run(() =>
@@ -2945,13 +3036,37 @@ internal static class Program
             if (serverProcess != null && serverProcess.HasExited)
             {
                 poll.Stop();
-                ShowError("服务进程意外退出", "服务进程已退出，详细日志见 .launcher\\server.log", true);
+                // L3: 从 server.log 尾部识别常见失败原因，给出针对性提示
+                ShowError("服务进程意外退出", ReadServerLogHint(), true);
             }
             else if (waitedSeconds > 90)
             {
                 poll.Stop();
-                ShowError("服务启动超时", "90 秒内未打开 3080 端口，详细日志见 .launcher\\server.log", true);
+                // L5: 未自行启动服务（attach 场景）时，文案不称“启动超时”
+                ShowError(serverProcess == null ? "服务连接超时" : "服务启动超时",
+                    "90 秒内未能打开 3080 端口，详细日志见 .launcher\\server.log", true);
             }
+        }
+
+        private string ReadServerLogHint()
+        {
+            string baseMsg = "服务进程已退出，详细日志见 .launcher\\server.log";
+            try
+            {
+                if (File.Exists(ServerLog))
+                {
+                    var lines = File.ReadAllLines(ServerLog);
+                    string tail = string.Join("\r\n", lines.Skip(Math.Max(0, lines.Length - 15)));
+                    string low = tail.ToLowerInvariant();
+                    if (low.Contains("eaddrinuse") || low.Contains("already in use") || tail.Contains("已被占用"))
+                        return "3080 端口已被其他程序占用，请关闭占用端口的程序后重试。\r\n\r\n" + tail;
+                    if (low.Contains("cannot find module") || low.Contains("enoent"))
+                        return "缺少运行所需的文件或依赖（可能是构建不完整），请重试构建。\r\n\r\n" + tail;
+                    return baseMsg + "\r\n\r\n" + tail;
+                }
+            }
+            catch { }
+            return baseMsg;
         }
 
         // Soft hand-off into the web UI: the mascot dissolves while gently
