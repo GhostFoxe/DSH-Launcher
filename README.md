@@ -7,9 +7,14 @@
 >
 > **官方项目 / Official**：<https://github.com/deepseek-ai/deepseek-harness> · <https://deepseek.com/harness>
 
-DSH-Launcher 是一个 Windows 64 位便携式启动器。单文件 `DSH-Launcher.exe`，首次运行会自动下载并搭建 Node.js、pnpm 与 deepseek-harness 源码，构建后在本机 `http://127.0.0.1:3080` 起服务，并用内嵌的 WebView2 打开网页界面。
 
+## <span>一切的一切来源于某人的一句</span><br><br><span style="font-size:24px;color:red">“为什么不能直接安装啊”</span><br><span style="font-size:24px;color:red">“nodejs是什么啊”</span><br><span style="font-size:24px;color:red">“cmd是什么啊”</span><br><span style="font-size:24px;color:red">“为什么他下载一直卡着不动啊”</span><br><span style="font-size:24px;color:red">“为什么每次都要输指令才能进去啊”</span><br><span style="font-size:24px;color:red">“为什么还要只能用浏览器打开阿”</span><br><span style="font-size:24px;color:red">“什么是key啊”</span><br><span style="font-size:24px;color:red">“为什么还必须要花钱啊”</span><br><span style="font-size:24px;color:red">“我用豆包写代码都不用这么麻烦的”</span>
 
+</font></font>
+DSH-Launcher 是一个 Windows 64 位便携式启动器。单文件 `DSH-Launcher.exe`，首次运行检测到未安装的前置后会根据当前的网络情况自动选择并下载搭建 Node.js、pnpm 与 deepseek-harness 源码，构建后在本机 `http://127.0.0.1:3080` 起服务，并用内嵌的 WebView2 打开网页界面。
+完成安装后直接点击该启动器则可以像其他agent软件一样直接打开deepseek-harness
+
+~~当你刚学计算机的朋友兴致勃勃地让你帮忙安装时，你可以直接把这个东西甩给他。~~
 ## 使用
 
 1. 下载 `DSH-Launcher.exe`（或按下面「从源码编译」自己构建）。
