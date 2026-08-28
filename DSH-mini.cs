@@ -50,6 +50,13 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
+        // DSH 依赖 64 位 Node.js（Node v24 已无 32 位 Windows 构建），仅支持 64 位系统
+        if (IntPtr.Size != 8)
+        {
+            MessageBox.Show("本程序需要 64 位 Windows 才能运行（当前为 32 位系统）。\r\n请在 64 位系统上重新运行。",
+                "DeepSeek Harness", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            return 1;
+        }
         try
         {
             Directory.CreateDirectory(RuntimeDir);
@@ -132,9 +139,7 @@ internal static class Program
     private static void ExtractNativeLoader()
     {
         string target = Path.Combine(RuntimeDir, "WebView2Loader.dll");
-        // C: 按进程位数选择 x64/x86 原生加载器，兼容 32 位系统
-        string resName = IntPtr.Size == 8 ? "WebView2Loader.x64.dll" : "WebView2Loader.x86.dll";
-        using (Stream st = Assembly.GetExecutingAssembly().GetManifestResourceStream(resName))
+        using (Stream st = Assembly.GetExecutingAssembly().GetManifestResourceStream("WebView2Loader.dll"))
         {
             if (st != null && (!File.Exists(target) || new FileInfo(target).Length != st.Length))
             {
@@ -228,11 +233,9 @@ internal static class Program
     private sealed class DownloadConfig
     {
         public List<string> NodeUrls = new List<string>();
-        public List<string> NodeX86Urls = new List<string>();
         public List<string> PnpmZipUrls = new List<string>();
         public List<string> PnpmTgzUrls = new List<string>();
         public string NodeSha256 = "";
-        public string NodeX86Sha256 = "";
         public string PnpmSha256 = "";
         public string PinnedSha = "";
         public string RepoApiUrl = "";
@@ -498,11 +501,9 @@ internal static class Program
                 var cfg = new DownloadConfig
                 {
                     NodeUrls = CfgStrList(node, "urls"),
-                    NodeX86Urls = CfgStrList(node, "x86Urls"),
                     PnpmZipUrls = CfgStrList(pnpm, "zip"),
                     PnpmTgzUrls = CfgStrList(pnpm, "tgz"),
                     NodeSha256 = CfgStr(node, "sha256") ?? "",
-                    NodeX86Sha256 = CfgStr(node, "x86Sha256") ?? "",
                     PnpmSha256 = CfgStr(pnpm, "sha256") ?? "",
                     PinnedSha = CfgStr(repo, "pinnedSha") ?? "",
                     RepoApiUrl = CfgStr(repo, "apiUrl") ?? "",
@@ -1282,11 +1283,7 @@ internal static class Program
                 ctx.SetStatus("[1/4] 下载 Node.js");
                 bool nodeOk = false;
                 var nodeFailures = new List<string>();
-                // C: 按进程位数选择 x64/x86 下载源与校验和
-                var nodeUrls = IntPtr.Size == 8 ? Cfg.NodeUrls : Cfg.NodeX86Urls;
-                var nodeSha = IntPtr.Size == 8 ? Cfg.NodeSha256 : Cfg.NodeX86Sha256;
-                if (nodeUrls.Count == 0) nodeUrls = Cfg.NodeUrls;
-                foreach (string url in nodeUrls)
+                foreach (string url in Cfg.NodeUrls)
                 {
                     string zip = Path.Combine(RuntimeDir, "node.zip");
                     try
@@ -1309,7 +1306,7 @@ internal static class Program
                         File.Delete(zip);
                         if (File.Exists(NodeExe))
                         {
-                            if (VerifySha256(NodeExe, nodeSha)) { nodeOk = true; break; }
+                            if (VerifySha256(NodeExe, Cfg.NodeSha256)) { nodeOk = true; break; }
                             nodeFailures.Add(url + " -> node.exe 校验和不匹配");
                             try { File.Delete(NodeExe); } catch { }
                         }
