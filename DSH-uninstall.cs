@@ -91,6 +91,20 @@ internal static class Uninstaller
         catch { }
     }
 
+    // 移除开机自启动注册表项（若用户曾开启），避免卸载后残留指向已删除 exe 的启动项
+    internal static void RemoveAutoStart()
+    {
+        try
+        {
+            using (var k = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(
+                @"Software\Microsoft\Windows\CurrentVersion\Run", true))
+            {
+                if (k != null) k.DeleteValue("DSH-Launcher", false);
+            }
+        }
+        catch { }
+    }
+
     // ---------- deletion engine ----------
 
     internal sealed class DeleteResult
@@ -745,6 +759,8 @@ internal static class Uninstaller
             SetStage("正在停止相关进程…", "");
             Log("停止启动器与服务进程…");
             KillOurProcesses();
+            Log("移除开机自启动项…");
+            RemoveAutoStart();
             Thread.Sleep(1500);
             Log("进程已停止");
 
