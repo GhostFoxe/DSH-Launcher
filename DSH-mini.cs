@@ -34,6 +34,8 @@ internal static class Program
     // this source file so a link refresh is a one-line edit + rebuild instead
     // of a code change). LoadConfig() populates Cfg once at startup.
     private static DownloadConfig Cfg;
+    // 当前正在运行的下载/安装/构建子进程（node/pnpm），供用户强制关闭时杀掉，避免孤儿进程
+    private static Process activeChild;
 
     private static readonly string BaseDir = AppDomain.CurrentDomain.BaseDirectory;
     private static string DshHome { get { return Path.Combine(BaseDir, "deepseek-harness"); } }
@@ -1083,7 +1085,9 @@ internal static class Program
             // node/tsdown emit UTF-8; without this the log shows GBK mojibake.
             psi.StandardOutputEncoding = Encoding.UTF8;
             psi.StandardErrorEncoding = Encoding.UTF8;
-            using (var p = Process.Start(psi))
+            var p = Process.Start(psi);
+            activeChild = p;
+            using (p)
             {
                 var sync = new object();
                 var tail = new Queue<string>();
@@ -1135,6 +1139,10 @@ internal static class Program
             result.Kind = FailKind.Other;
             result.Tail = ex.Message;
             return result;
+        }
+        finally
+        {
+            activeChild = null;
         }
     }
 
@@ -1281,10 +1289,39 @@ internal static class Program
             if (!File.Exists(NodeExe))
             {
                 ctx.SetStatus("[1/4] 下载 Node.js");
+                // 测速选最快 Node 源（M3 逐源化时误删，现恢复路线选择）
+                var nodeUrls = Cfg.NodeUrls;
+                var order = Enumerable.Range(0, nodeUrls.Count).ToArray();
+                if (Cfg.ProbeEnabled && nodeUrls.Count > 1)
+                {
+                    ctx.SetStatus("[1/4] 测速选择最快 Node 源…");
+                    ProbeResult[] probes = null;
+                    try
+                    {
+                        probes = Task.WhenAll(nodeUrls.Select(u => ProbeAsync(u, Cfg.ProbeTimeoutMs, Cfg.ProbeSampleBytes))).GetAwaiter().GetResult();
+                    }
+                    catch (Exception ex)
+                    {
+                        Log("Node 测速异常（按配置顺序下载）: " + ex.Message);
+                    }
+                    if (probes != null)
+                    {
+                        order = RankSources(probes);
+                        for (int i = 0; i < nodeUrls.Count; i++)
+                        {
+                            string info = probes[i] == null ? "不可达" : probes[i].ThroughputMbps.ToString("0.0") + " MB/s";
+                            Log("Node 测速[" + (Array.IndexOf(order, i) + 1) + "] " + nodeUrls[i] + " -> " + info);
+                        }
+                        if (probes.All(p => p == null))
+                            throw new InvalidOperationException("网络连接不可用：所有 Node 源均无法连通，请检查网络后重试");
+                    }
+                }
+
                 bool nodeOk = false;
                 var nodeFailures = new List<string>();
-                foreach (string url in Cfg.NodeUrls)
+                foreach (int idx in order)
                 {
+                    string url = nodeUrls[idx];
                     string zip = Path.Combine(RuntimeDir, "node.zip");
                     try
                     {
@@ -3174,11 +3211,24 @@ internal static class Program
         {
             if (busy)
             {
-                MessageBox.Show(this,
-                    "正在下载 / 安装 / 构建，关闭将导致状态不完整，请等待完成。",
-                    Text, MessageBoxButtons.OK, MessageBoxIcon.Information);
-                e.Cancel = true;
-                return;
+                var r = MessageBox.Show(this,
+                    "正在下载 / 安装 / 构建，强行退出会导致状态不完整，下次启动需重新开始。\r\n确定要退出吗？",
+                    Text, MessageBoxButtons.YesNo, MessageBoxIcon.Warning);
+                if (r == DialogResult.No)
+                {
+                    e.Cancel = true;
+                    return;
+                }
+                // 用户确认强退：结束正在运行的下载/安装/构建子进程树，避免孤儿进程
+                try
+                {
+                    if (activeChild != null && !activeChild.HasExited)
+                    {
+                        using (Process.Start(new ProcessStartInfo("taskkill", "/PID " + activeChild.Id + " /T /F")
+                        { UseShellExecute = false, CreateNoWindow = true })) { }
+                    }
+                }
+                catch { }
             }
             try { loadPanel.StopAnim(); } catch { }
             if (serverProcess != null && !serverProcess.HasExited)
