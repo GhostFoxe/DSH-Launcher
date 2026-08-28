@@ -12,8 +12,16 @@
       "https://registry.npmmirror.com/-/binary/node/v24.15.0/node-v24.15.0-win-x64.zip",
       "https://cdn.npmmirror.com/binaries/node/v24.15.0/node-v24.15.0-win-x64.zip"
     ],
+    // 32 位系统使用的 x86 下载源（64 位进程用上面的 urls）
+    "x86Urls": [
+      "https://nodejs.org/dist/v24.15.0/node-v24.15.0-win-x86.zip",
+      "https://registry.npmmirror.com/-/binary/node/v24.15.0/node-v24.15.0-win-x86.zip",
+      "https://cdn.npmmirror.com/binaries/node/v24.15.0/node-v24.15.0-win-x86.zip"
+    ],
     // 解压后 node.exe 的 SHA256，用于完整性校验；为空则跳过校验
-    "sha256": "3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5"
+    "sha256": "3331e1ffe19874215472217c5e94f5a0c6d8e18c4ac7111d3937aa0ad5e9b4a5",
+    // x86 node.exe 的 SHA256（暂未提供，为空则跳过校验）
+    "x86Sha256": ""
   },
   "pnpm": {
     "zip": [

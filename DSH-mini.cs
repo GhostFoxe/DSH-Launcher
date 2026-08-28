@@ -132,7 +132,9 @@ internal static class Program
     private static void ExtractNativeLoader()
     {
         string target = Path.Combine(RuntimeDir, "WebView2Loader.dll");
-        using (Stream st = Assembly.GetExecutingAssembly().GetManifestResourceStream("WebView2Loader.dll"))
+        // C: 按进程位数选择 x64/x86 原生加载器，兼容 32 位系统
+        string resName = IntPtr.Size == 8 ? "WebView2Loader.x64.dll" : "WebView2Loader.x86.dll";
+        using (Stream st = Assembly.GetExecutingAssembly().GetManifestResourceStream(resName))
         {
             if (st != null && (!File.Exists(target) || new FileInfo(target).Length != st.Length))
             {
@@ -226,9 +228,11 @@ internal static class Program
     private sealed class DownloadConfig
     {
         public List<string> NodeUrls = new List<string>();
+        public List<string> NodeX86Urls = new List<string>();
         public List<string> PnpmZipUrls = new List<string>();
         public List<string> PnpmTgzUrls = new List<string>();
         public string NodeSha256 = "";
+        public string NodeX86Sha256 = "";
         public string PnpmSha256 = "";
         public string PinnedSha = "";
         public string RepoApiUrl = "";
@@ -271,6 +275,7 @@ internal static class Program
         {
             private readonly string s;
             private int i;
+            private int depth;
 
             public Reader(string s) { this.s = s; }
 
@@ -322,15 +327,21 @@ internal static class Program
 
             public object Value()
             {
-                char c = Peek();
-                if (c == '{') return Obj();
-                if (c == '[') return Arr();
-                if (c == '"') return Str();
-                if (c == 't') { Lit("true"); return true; }
-                if (c == 'f') { Lit("false"); return false; }
-                if (c == 'n') { Lit("null"); return null; }
-                if (c == '-' || (c >= '0' && c <= '9')) return Num();
-                throw new FormatException("JSON 非法字符 '" + c + "'，位置 " + i);
+                // F1: 递归深度上限，防恶意/误配配置触发栈溢出
+                if (depth++ >= 512) { depth--; throw new FormatException("JSON 嵌套过深，位置 " + i); }
+                try
+                {
+                    char c = Peek();
+                    if (c == '{') return Obj();
+                    if (c == '[') return Arr();
+                    if (c == '"') return Str();
+                    if (c == 't') { Lit("true"); return true; }
+                    if (c == 'f') { Lit("false"); return false; }
+                    if (c == 'n') { Lit("null"); return null; }
+                    if (c == '-' || (c >= '0' && c <= '9')) return Num();
+                    throw new FormatException("JSON 非法字符 '" + c + "'，位置 " + i);
+                }
+                finally { depth--; }
             }
 
             private void Lit(string word)
@@ -487,9 +498,11 @@ internal static class Program
                 var cfg = new DownloadConfig
                 {
                     NodeUrls = CfgStrList(node, "urls"),
+                    NodeX86Urls = CfgStrList(node, "x86Urls"),
                     PnpmZipUrls = CfgStrList(pnpm, "zip"),
                     PnpmTgzUrls = CfgStrList(pnpm, "tgz"),
                     NodeSha256 = CfgStr(node, "sha256") ?? "",
+                    NodeX86Sha256 = CfgStr(node, "x86Sha256") ?? "",
                     PnpmSha256 = CfgStr(pnpm, "sha256") ?? "",
                     PinnedSha = CfgStr(repo, "pinnedSha") ?? "",
                     RepoApiUrl = CfgStr(repo, "apiUrl") ?? "",
@@ -834,6 +847,9 @@ internal static class Program
                 string sizeText = Encoding.ASCII.GetString(header, 124, 12).Trim('\0', ' ');
                 if (sizeText.Length == 0) break;
                 long size = Convert.ToInt64(sizeText, 8);
+                // F2: 防恶意 tar 用巨大 size 触发内存耗尽；单条目上限 64MB
+                if (size < 0 || size > 64L * 1024 * 1024)
+                    throw new InvalidDataException("tar 条目大小异常: " + size);
                 char type = (char)header[156];
                 long dataPad = (512 - (size % 512)) % 512;
 
@@ -1077,7 +1093,7 @@ internal static class Program
                     if (e.Data == null) return;
                     lock (sync)
                     {
-                        File.AppendAllText(BuildLog, e.Data + Environment.NewLine);
+                        try { File.AppendAllText(BuildLog, e.Data + Environment.NewLine); } catch { }
                         tail.Enqueue(e.Data);
                         while (tail.Count > 60) tail.Dequeue();
                         Classify(e.Data, ref kind);
@@ -1266,7 +1282,11 @@ internal static class Program
                 ctx.SetStatus("[1/4] 下载 Node.js");
                 bool nodeOk = false;
                 var nodeFailures = new List<string>();
-                foreach (string url in Cfg.NodeUrls)
+                // C: 按进程位数选择 x64/x86 下载源与校验和
+                var nodeUrls = IntPtr.Size == 8 ? Cfg.NodeUrls : Cfg.NodeX86Urls;
+                var nodeSha = IntPtr.Size == 8 ? Cfg.NodeSha256 : Cfg.NodeX86Sha256;
+                if (nodeUrls.Count == 0) nodeUrls = Cfg.NodeUrls;
+                foreach (string url in nodeUrls)
                 {
                     string zip = Path.Combine(RuntimeDir, "node.zip");
                     try
@@ -1289,7 +1309,7 @@ internal static class Program
                         File.Delete(zip);
                         if (File.Exists(NodeExe))
                         {
-                            if (VerifySha256(NodeExe, Cfg.NodeSha256)) { nodeOk = true; break; }
+                            if (VerifySha256(NodeExe, nodeSha)) { nodeOk = true; break; }
                             nodeFailures.Add(url + " -> node.exe 校验和不匹配");
                             try { File.Delete(NodeExe); } catch { }
                         }
