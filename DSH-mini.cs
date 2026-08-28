@@ -1107,13 +1107,17 @@ internal static class Program
         {
             string p = Path.Combine(DshHome, rel);
             if (!File.Exists(p)) continue;
-            using (var sha = SHA256.Create())
-            using (var fs = File.OpenRead(p))
+            try
             {
-                sb.Append(rel).Append('=')
-                  .Append(BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "").ToLowerInvariant())
-                  .Append('\n');
+                using (var sha = SHA256.Create())
+                using (var fs = File.OpenRead(p))
+                {
+                    sb.Append(rel).Append('=')
+                      .Append(BitConverter.ToString(sha.ComputeHash(fs)).Replace("-", "").ToLowerInvariant())
+                      .Append('\n');
+                }
             }
+            catch { /* 哨兵文件被占用/删除：跳过该哨兵，宁可误判为需重建 */ }
         }
         return sb.ToString();
     }
@@ -1132,7 +1136,8 @@ internal static class Program
     {
         string binJs = Path.Combine(DshHome, @"apps\cli\lib\bin.js");
         if (!File.Exists(binJs) || !File.Exists(StampFile)) return false;
-        return File.ReadAllText(StampFile) == ContentFingerprint();
+        try { return File.ReadAllText(StampFile) == ContentFingerprint(); }
+        catch { return false; } // 标记被占用/损坏 → 视为需重建（与 InstallDone 对齐）
     }
 
     // Install is "done" only when node_modules exists AND the install.stamp
