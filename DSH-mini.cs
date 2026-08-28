@@ -204,12 +204,17 @@ internal static class Program
     }
 
     private static string PnpmShim { get { return Path.Combine(Path.GetDirectoryName(NodeExe), "pnpm.cmd"); } }
+    private static string NpmShim { get { return Path.Combine(Path.GetDirectoryName(NodeExe), "npm.cmd"); } }
 
-    // Upstream scripts/build.ts spawns "pnpm" BY NAME, which only resolves
-    // through PATH. We invoke pnpm.mjs via node by absolute path, so on a
-    // machine without a global pnpm the web-frontend build step fails with
-    // "'pnpm' 不是内部或外部命令". Drop a pnpm.cmd shim next to node.exe
-    // (NewProc prepends that dir to PATH) so the name always resolves.
+    // Upstream scripts/build.ts spawns "pnpm" BY NAME, and the root
+    // package.json "build:lib" script chains its host/client builds with
+    // "npm run build:lib:*". Both names resolve only through PATH. We invoke
+    // pnpm.mjs via node by absolute path, so on a machine without global
+    // pnpm/npm the build fails with "'pnpm'/'npm' 不是内部或外部命令". Drop
+    // pnpm.cmd and npm.cmd shims next to node.exe (NewProc prepends that dir
+    // to PATH) so both names always resolve. npm.cmd forwards to pnpm.mjs:
+    // the build only ever runs `npm run <script>`, and `pnpm run` is a
+    // drop-in for that.
     private static void EnsurePnpmShim()
     {
         try
@@ -222,8 +227,10 @@ internal static class Program
                 "set \"NODE=%~dp0node.exe\"\r\n" +
                 "set \"PNPM=%~dp0..\\pnpm\\dist\\pnpm.mjs\"\r\n" +
                 "\"!NODE!\" \"!PNPM!\" %*\r\n";
-            if (File.Exists(PnpmShim) && File.ReadAllText(PnpmShim) == content) return;
-            File.WriteAllText(PnpmShim, content);
+            if (!(File.Exists(PnpmShim) && File.ReadAllText(PnpmShim) == content))
+                File.WriteAllText(PnpmShim, content);
+            if (!(File.Exists(NpmShim) && File.ReadAllText(NpmShim) == content))
+                File.WriteAllText(NpmShim, content);
         }
         catch { }
     }
