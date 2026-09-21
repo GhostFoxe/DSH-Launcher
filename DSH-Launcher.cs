@@ -1137,13 +1137,15 @@ internal static class Program
         }
     }
 
-    private static RunResult RunLogged(string file, string args, string workdir, string commitHash, int timeoutMs, string registry)
+    private static RunResult RunLogged(string file, string args, string workdir, string commitHash, int timeoutMs, string registry, Dictionary<string, string> extraEnv)
     {
         var result = new RunResult();
         try
         {
             var psi = NewProc(file, args, workdir);
             if (commitHash != null) psi.EnvironmentVariables["DSH_CLIENT_COMMIT_HASH"] = commitHash;
+            if (extraEnv != null)
+                foreach (var kv in extraEnv) psi.EnvironmentVariables[kv.Key] = kv.Value;
             // Keep npm-ecosystem downloads (e.g. sharp's libvips) inside
             // .launcher so uninstall removes everything it fetched.
             psi.EnvironmentVariables["npm_config_cache"] = Path.Combine(RuntimeDir, "npm-cache");
@@ -1217,7 +1219,16 @@ internal static class Program
 
     private static RunResult RunPnpm(string args, string workdir, string commitHash, int timeoutMs, string registry)
     {
-        return RunLogged(NodeExe, "\"" + PnpmMjs + "\" " + args, workdir, commitHash, timeoutMs, registry);
+        // pnpm 在需要清空 node_modules 时会交互式询问（"The modules directories
+        // will be removed and reinstalled from scratch. Proceed?"）。启动器以
+        // 无 TTY 子进程方式运行，该询问必然中止安装
+        // （ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY）。CI=true 让 pnpm 在
+        // 非交互场景下自动确认清理；confirmModulesPurge=false 双保险。
+        // 这样目录搬家 / 链接损坏后的自愈重装才能真正走下去。
+        var env = new Dictionary<string, string>();
+        env["CI"] = "true";
+        env["npm_config_confirm_modules_purge"] = "false";
+        return RunLogged(NodeExe, "\"" + PnpmMjs + "\" " + args, workdir, commitHash, timeoutMs, registry, env);
     }
 
     // ---------- build freshness ----------
@@ -1236,7 +1247,10 @@ internal static class Program
 
     private static string FingerprintOf(string prefix, string[] rels)
     {
-        var sb = new StringBuilder(prefix + "\n");
+        // 把安装目录的绝对路径写进指纹：pnpm 在 Windows 上用 junction 链接
+        // node_modules，junction 只能存绝对路径，整个目录一旦被移动/复制，
+        // 所有链接即悬空。路径变了就必须强制重装，否则 stamp 全部"假命中"。
+        var sb = new StringBuilder(prefix + "\nhome=" + Path.GetFullPath(DshHome).TrimEnd('\\') + "\n");
         foreach (string rel in rels)
         {
             string p = Path.Combine(DshHome, rel);
@@ -1274,14 +1288,40 @@ internal static class Program
         catch { return false; } // 标记被占用/损坏 → 视为需重建（与 InstallDone 对齐）
     }
 
+    // 链接健康探针：File.Exists / Directory.Exists 会跟随 junction，
+    // 目标不存在（目录搬家、杀毒误删、手动清理）即返回 false。
+    // 选取服务启动依赖链上的代表节点，覆盖 workspace 链接与外部包链接。
+    private static readonly string[] LinkProbes =
+    {
+        @"node_modules\.pnpm",                                             // pnpm 虚拟 store
+        @"apps\cli\node_modules\@deepseek-ai\dsh-app-boot\package.json",   // 服务入口的工作区依赖
+        @"apps\cli\node_modules\commander\package.json",                   // 外部包（链接到虚拟 store）
+    };
+
+    private static bool InstallLinksHealthy()
+    {
+        foreach (string rel in LinkProbes)
+        {
+            string p = Path.Combine(DshHome, rel);
+            if (rel.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+            {
+                if (!File.Exists(p)) return false;
+            }
+            else if (!Directory.Exists(p)) return false;
+        }
+        return true;
+    }
+
     // Install is "done" only when node_modules exists AND the install.stamp
     // (written last, on success) matches the current package manifests. An
     // interrupted install leaves no stamp, so the next run re-installs —
     // pnpm resumes from its store instead of re-downloading everything.
+    // 链接探针兜住"stamp 完好但 node_modules 已悬空"的搬家场景。
     private static bool InstallDone()
     {
         if (!Directory.Exists(Path.Combine(DshHome, "node_modules"))) return false;
         if (!File.Exists(InstallStampFile)) return false;
+        if (!InstallLinksHealthy()) return false;
         try { return File.ReadAllText(InstallStampFile) == InstallFingerprint(); }
         catch { return false; }
     }
@@ -1549,6 +1589,13 @@ internal static class Program
             RunResult install = null;
             if (!InstallDone())
             {
+                // 搬家/误删会让 pnpm 的 junction 全部悬空：给出说明性提示，
+                // 实际修复由下方带 CI=true 的 pnpm install 自动清目录重装完成
+                if (Directory.Exists(Path.Combine(DshHome, "node_modules")) && !InstallLinksHealthy())
+                {
+                    Log("检测到 node_modules 链接已失效（目录可能被移动过），自动重装修复");
+                    ctx.SetStatus("[4/4] 检测到环境组件链接失效，正在自动修复...");
+                }
                 // --store-dir keeps pnpm's package store inside .launcher;
                 // otherwise it leaks to <drive>:\.pnpm-store and survives
                 // uninstall (verified: pnpm v11 ignores npm_config_store_dir).

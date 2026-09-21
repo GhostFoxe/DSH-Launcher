@@ -114,12 +114,20 @@ internal static class Uninstaller
         public readonly List<string> Failed = new List<string>();
     }
 
+    internal sealed class FileEntry
+    {
+        public string Path;
+        public long Length;
+    }
+
     // File enumeration that does NOT descend into reparse points (junctions /
     // symlinked dirs). pnpm's node_modules is full of junctions; following
     // them counts the same files many times (and could escape our tree).
-    internal static List<string> EnumerateRealFiles(string root)
+    // 大小在枚举时顺带取得（元数据查询，不打开文件）——逐文件 CreateFile 曾是
+    // 卸载慢的主因：硬链接去重要求打开每个文件，11 万文件 × 3 遍 ≈ 1 分钟。
+    internal static List<FileEntry> EnumerateRealFiles(string root)
     {
-        var list = new List<string>();
+        var list = new List<FileEntry>();
         var stack = new Stack<string>();
         stack.Push(root);
         while (stack.Count > 0)
@@ -135,7 +143,12 @@ internal static class Uninstaller
             string[] files;
             try { files = Directory.GetFiles(dir); }
             catch { continue; }
-            list.AddRange(files);
+            foreach (string f in files)
+            {
+                long len = 0;
+                try { len = new FileInfo(f).Length; } catch { }
+                list.Add(new FileEntry { Path = f, Length = len });
+            }
         }
         return list;
     }
@@ -168,37 +181,48 @@ internal static class Uninstaller
         catch { return false; }
     }
 
-    internal static DeleteResult DeleteTree(string root, Action<long, long, string> report, HardlinkDedupe dedupe)
+    // 单趟删除：枚举时已有大小，不再有独立的 sizing 循环，也不再逐文件打开
+    // 做硬链接去重；SetAttributes 改为异常驱动（仅只读文件需要）；report 按
+    // 时间节流（≤每 150ms 一次），避免每 20 个文件一次的 UI 封送拖慢工作线程。
+    internal static DeleteResult DeleteTree(string root, Action<long, long, string> report)
     {
         var result = new DeleteResult();
         if (!Directory.Exists(root)) return result;
 
         var files = EnumerateRealFiles(root);
 
-        long total = 0;
-        var sizes = new long[files.Count];
+        int lastReport = Environment.TickCount;
         for (int i = 0; i < files.Count; i++)
         {
-            long len = 0;
-            try { len = new FileInfo(files[i]).Length; } catch { }
-            if (dedupe != null) len = dedupe.Effective(files[i], len);
-            sizes[i] = len;
-            total += len;
-        }
-
-        long doneBytes = 0;
-        for (int i = 0; i < files.Count; i++)
-        {
+            string f = files[i].Path;
             try
             {
-                File.SetAttributes(files[i], FileAttributes.Normal);
-                File.Delete(files[i]);
+                File.Delete(f);
                 result.Files++;
-                result.Bytes += sizes[i];
+                result.Bytes += files[i].Length;
             }
-            catch { result.Failed.Add(files[i]); }
-            doneBytes += sizes[i];
-            if (i % 20 == 0 && report != null) report(doneBytes, total, files[i]);
+            catch
+            {
+                // 只读文件：清属性后原地重试一次；仍失败记入失败清单
+                try
+                {
+                    if ((File.GetAttributes(f) & FileAttributes.ReadOnly) != 0)
+                    {
+                        File.SetAttributes(f, FileAttributes.Normal);
+                        File.Delete(f);
+                        result.Files++;
+                        result.Bytes += files[i].Length;
+                    }
+                    else result.Failed.Add(f);
+                }
+                catch { result.Failed.Add(f); }
+            }
+            // report 语义为（已处理文件数, 本树文件总数, 当前文件），按时间节流
+            if (report != null && Environment.TickCount - lastReport >= 150)
+            {
+                lastReport = Environment.TickCount;
+                report(i + 1, files.Count, f);
+            }
         }
 
         // Retry the failures once (handles transient locks).
@@ -230,53 +254,6 @@ internal static class Uninstaller
         if (bytes >= 1024) return (bytes / 1024.0).ToString("0") + " KB";
         return bytes + " B";
     }
-
-    // Counts the bytes of hardlinked files only once (per volume+file-index).
-    // pnpm hardlinks store files into node_modules, so the same physical
-    // bytes would otherwise show up in BOTH cards and double the totals.
-    internal sealed class HardlinkDedupe
-    {
-        private readonly HashSet<string> seen = new HashSet<string>();
-
-        internal long Effective(string path, long length)
-        {
-            if (length <= 0) return 0;
-            try
-            {
-                using (var fs = new FileStream(path, FileMode.Open, FileAccess.Read,
-                    FileShare.ReadWrite | FileShare.Delete))
-                {
-                    BY_HANDLE_FILE_INFORMATION info;
-                    if (GetFileInformationByHandle(fs.SafeFileHandle, out info) && info.nNumberOfLinks > 1)
-                    {
-                        string key = info.dwVolumeSerialNumber + ":" + info.nFileIndexHigh + ":" + info.nFileIndexLow;
-                        if (!seen.Add(key)) return 0;
-                    }
-                }
-            }
-            catch { }
-            return length;
-        }
-    }
-
-    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
-    private struct BY_HANDLE_FILE_INFORMATION
-    {
-        public uint dwFileAttributes;
-        public System.Runtime.InteropServices.ComTypes.FILETIME ftCreationTime;
-        public System.Runtime.InteropServices.ComTypes.FILETIME ftLastAccessTime;
-        public System.Runtime.InteropServices.ComTypes.FILETIME ftLastWriteTime;
-        public uint dwVolumeSerialNumber;
-        public uint nFileSizeHigh;
-        public uint nFileSizeLow;
-        public uint nNumberOfLinks;
-        public uint nFileIndexHigh;
-        public uint nFileIndexLow;
-    }
-
-    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool GetFileInformationByHandle(
-        Microsoft.Win32.SafeHandles.SafeFileHandle hFile, out BY_HANDLE_FILE_INFORMATION lpFileInformation);
 
     // ---------- theme ----------
 
@@ -342,6 +319,7 @@ internal static class Uninstaller
             public string Path;
             public string Title;
             public long ScannedBytes = -1;
+            public long ScannedCount = -1;
         }
 
         private readonly List<Item> items = new List<Item>();
@@ -360,7 +338,6 @@ internal static class Uninstaller
         private readonly Button exitButton = new Button();
         private readonly System.Windows.Forms.Timer countdown = new System.Windows.Forms.Timer();
         private int countdownLeft = 8;
-        private long totalBytes;
         private long deletedBytes;
         private bool exiting;
 
@@ -588,9 +565,9 @@ internal static class Uninstaller
 
         private void ScanSizes()
         {
-            // One shared dedupe across all cards: hardlinked store files are
-            // attributed to the first card scanned, not counted twice.
-            var dedupe = new Uninstaller.HardlinkDedupe();
+            // 纯背景装饰性统计：枚举时顺带累加大小，零打开文件。不做硬链接
+            // 去重（pnpm store 与 node_modules 之间的共享文件会双计），
+            // 因此显示为"约"。删除流程不等待也不复用本统计。
             foreach (var item in items)
             {
                 var captured = item;
@@ -600,33 +577,32 @@ internal static class Uninstaller
                 {
                     try
                     {
-                        foreach (string f in Uninstaller.EnumerateRealFiles(item.Path))
+                        foreach (var fe in Uninstaller.EnumerateRealFiles(item.Path))
                         {
-                            long len = 0;
-                            try { len = new FileInfo(f).Length; } catch { }
-                            bytes += dedupe.Effective(f, len);
+                            bytes += fe.Length;
                             count++;
-                            if (count % 300 == 0)
+                            if (count % 1000 == 0)
                             {
                                 long b = bytes, c = count;
-                                Ui(() => captured.SizeLabel.Text = c.ToString("N0") + " 个 · " + FormatSize(b));
+                                Ui(() => captured.SizeLabel.Text = c.ToString("N0") + " 个 · 约 " + FormatSize(b));
                             }
                         }
                     }
                     catch { }
                 }
                 item.ScannedBytes = bytes;
+                item.ScannedCount = count;
                 long bFinal = bytes, cFinal = count;
                 Ui(() =>
                 {
-                    if (captured.ScannedBytes <= 0)
+                    if (captured.ScannedCount <= 0 && !Directory.Exists(captured.Path))
                     {
                         captured.Box.Enabled = false;
                         captured.SizeLabel.Text = "不存在";
                     }
                     else
                     {
-                        captured.SizeLabel.Text = cFinal.ToString("N0") + " 个 · " + FormatSize(bFinal);
+                        captured.SizeLabel.Text = cFinal.ToString("N0") + " 个 · 约 " + FormatSize(bFinal);
                     }
                 });
             }
@@ -764,44 +740,40 @@ internal static class Uninstaller
             Thread.Sleep(1500);
             Log("进程已停止");
 
-            totalBytes = 0;
-            var dedupe = new Uninstaller.HardlinkDedupe();
+            // 删除不再等待或复算任何统计：进度以文件数推进，总量取背景扫描的
+            // 快照估值（尚未扫到的项按 0 计，此时进度条退化为按当前目录推进）。
+            long estTotal = 0;
+            foreach (var it in selected)
+                if (it.ScannedCount > 0) estTotal += it.ScannedCount;
             var paths = selected.Select(i => i.Path).Where(Directory.Exists).ToList();
-            foreach (string p in paths)
-            {
-                try
-                {
-                    foreach (string f in Uninstaller.EnumerateRealFiles(p))
-                    {
-                        long len = 0;
-                        try { len = new FileInfo(f).Length; } catch { }
-                        totalBytes += dedupe.Effective(f, len);
-                    }
-                }
-                catch { }
-            }
             deletedBytes = 0;
+            long filesDone = 0;
 
             foreach (string path in paths)
             {
                 string shortName = Shorten(path);
                 SetStage("正在删除：" + Path.GetFileName(path.TrimEnd('\\')), "");
                 Log("开始删除 " + shortName + " …");
+                long baseFiles = filesDone;
                 var res = Uninstaller.DeleteTree(path, (done, total, current) =>
                 {
-                    long currentDeleted = deletedBytes + done;
-                    int percent = totalBytes > 0 ? (int)(currentDeleted * 100 / totalBytes) : 0;
+                    long doneOverall = baseFiles + done;
+                    int percent = estTotal > 0
+                        ? (int)Math.Min(99, doneOverall * 100 / estTotal)
+                        : (total > 0 ? (int)(done * 100 / total) : 0);
                     Ui(() =>
                     {
                         bar.Value = Math.Max(0, Math.Min(100, percent));
-                        detailLabel.Text = shortName + "\r\n已释放 " + FormatSize(currentDeleted)
-                            + " / " + FormatSize(totalBytes) + "（" + percent + "%）";
+                        detailLabel.Text = shortName + "\r\n已删除 " + doneOverall.ToString("N0")
+                            + (estTotal > 0 ? " / 约 " + estTotal.ToString("N0") : " / " + total.ToString("N0"))
+                            + " 个文件（" + percent + "%）";
                     });
-                }, dedupe);
+                });
+                filesDone += res.Files + res.Failed.Count;
                 deletedBytes += res.Bytes;
                 allFailed.AddRange(res.Failed);
                 if (res.Failed.Count == 0)
-                    Log("✓ 已删除 " + shortName + "（" + res.Files + " 个文件，释放 " + FormatSize(res.Bytes) + "）");
+                    Log("✓ 已删除 " + shortName + "（" + res.Files + " 个文件，释放约 " + FormatSize(res.Bytes) + "）");
                 else
                     Log("△ " + shortName + " 有 " + res.Failed.Count + " 项被占用未能删除");
             }
