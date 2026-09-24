@@ -27,7 +27,7 @@
     "sha256": "d3a7f4bde2f32c5acc5f012d1edc24c24ea247c2f6c8823146f8cd69ed70b22f"
   },
   "repo": {
-    "pinnedSha": "ddefc45fbc7f8e46dd73185e68295696d1297887",
+    "pinnedSha": "46a7f68b0922371ce7144b668b90e377d8e799f4",
     "apiUrl": "https://api.github.com/repos/deepseek-ai/deepseek-harness/commits/master",
     "zipTemplates": [
       "https://codeload.github.com/deepseek-ai/deepseek-harness/zip/{0}",
