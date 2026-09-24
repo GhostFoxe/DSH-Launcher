@@ -35,6 +35,11 @@
       "https://gh-proxy.com/https://github.com/deepseek-ai/deepseek-harness/archive/{0}.zip"
     ]
   },
+  "plugins": {
+    // 构建完成后默认装进 web profile 的插件（走官方命令 dsh plugin --profile web add <名>）。
+    // 社区插件市场 DSH Plugin Hub 的 npm 包名是 dsh-plugin；空数组表示不装。
+    "defaultInstall": ["dsh-plugin"]
+  },
   "webView2Bootstrapper": "https://go.microsoft.com/fwlink/p/?LinkId=2124703",
   "npm": {
     // pnpm install 使用的 npm 包源；运行时会测速选优，失败自动切换

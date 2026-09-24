@@ -313,6 +313,7 @@ internal static class Program
         public List<string> RepoZipTemplates = new List<string>();
         public string WebView2Bootstrapper = "";
         public List<string> NpmRegistryUrls = new List<string>();
+        public List<string> DefaultPlugins = new List<string>();
         public bool ProbeEnabled = true;
         public int ProbeTimeoutMs = 4000;
         public int StallTimeoutMs = 20000;
@@ -582,6 +583,10 @@ internal static class Program
                     WebView2Bootstrapper = CfgStr(root, "webView2Bootstrapper") ?? "",
                 };
                 cfg.NpmRegistryUrls = npmUrls;
+
+                object pluginsObj = CfgGet(root, "plugins");
+                if (pluginsObj != null)
+                    cfg.DefaultPlugins = CfgStrList(CfgObj(pluginsObj, "plugins"), "defaultInstall");
 
                 object tuningObj = CfgGet(root, "tuning");
                 if (tuningObj != null)
@@ -1670,6 +1675,8 @@ internal static class Program
                 error = "构建未生成服务入口 apps\\cli\\lib\\bin.js，请重试";
                 return false;
             }
+            // 默认插件（社区插件市场等）：构建完成后装进 web profile，失败不阻塞启动
+            EnsureDefaultPlugins(ctx);
             return true;
         }
         catch (Exception ex)
@@ -1678,6 +1685,57 @@ internal static class Program
             error = ex.Message;
             return false;
         }
+    }
+
+    // ---------- 默认插件（社区插件市场等） ----------
+
+    // 把 sources.json 的 plugins.defaultInstall 装进 web profile，例如社区插件市场
+    // DSH Plugin Hub（npm 包名 dsh-plugin）。走官方命令 `dsh plugin --profile web add <spec>`，
+    // 该命令在 profile 不存在时会自行创建。非致命：失败只记日志，不影响启动。
+    private static void EnsureDefaultPlugins(StageContext ctx)
+    {
+        try
+        {
+            if (Cfg.DefaultPlugins == null || Cfg.DefaultPlugins.Count == 0) return;
+            string profilePkg = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                @".dsh\profiles\web\package.json");
+            string profileText = "";
+            try { if (File.Exists(profilePkg)) profileText = File.ReadAllText(profilePkg); } catch { }
+
+            foreach (string raw in Cfg.DefaultPlugins)
+            {
+                string spec = (raw ?? "").Trim();
+                if (spec.Length == 0) continue;
+                string name = PackageNameOf(spec);
+                if (profileText.IndexOf("\"" + name + "\"", StringComparison.Ordinal) >= 0)
+                {
+                    Log("默认插件已安装，跳过：" + spec);
+                    continue;
+                }
+                ctx.SetStatus("安装默认插件 " + spec + " ...");
+                ctx.SetProgress(null, "dsh plugin add " + spec + " 运行中…");
+                var r = RunPnpm("plugin --profile web add " + spec, DshHome, null, Cfg.InstallTimeoutMs, null);
+                if (r.ExitCode == 0) Log("已安装默认插件：" + spec);
+                else Log("默认插件安装失败（不影响启动）：" + spec + " -> " + r.Tail);
+            }
+        }
+        catch (Exception ex) { Log("默认插件安装异常（不影响启动）: " + ex.Message); }
+    }
+
+    // 从 spec 取出包名用于去重判断：name / name@1.2.3 / @scope/name / @scope/name@1.2.3
+    private static string PackageNameOf(string spec)
+    {
+        if (spec.Length == 0) return spec;
+        if (spec[0] == '@')
+        {
+            int slash = spec.IndexOf('/');
+            if (slash < 0) return spec;
+            int at = spec.IndexOf('@', slash);
+            return at < 0 ? spec : spec.Substring(0, at);
+        }
+        int at2 = spec.IndexOf('@');
+        return at2 <= 0 ? spec : spec.Substring(0, at2);
     }
 
     // ---------- server ----------
